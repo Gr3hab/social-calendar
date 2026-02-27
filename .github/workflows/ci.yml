@@ -52,8 +52,11 @@ jobs:
 
       - name: Run E2E smoke tests
         env:
-          PLAYWRIGHT_PORT: 4173
-        run: npm run test:e2e -- --project=chromium-desktop
+          TZ: Europe/Berlin
+          VITE_AUTH_MODE: mock
+          VITE_DATA_MODE: mock
+          VITE_FEATURE_AUTH_MAGIC_LINK_ONLY: "false"
+        run: npm run test:e2e -- --project=chromium-desktop --workers=1
 
       - name: Upload Playwright report
         if: always()
@@ -62,4 +65,3 @@ jobs:
           name: playwright-report
           path: playwright-report
           if-no-files-found: ignore
-
