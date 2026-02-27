@@ -1,0 +1,20 @@
+name: Keepalive Supabase
+
+on:
+  schedule:
+    # Alle 6 Stunden ausführen (UTC)
+    - cron: '0 */6 * * *'
+  # Manuell auslösbar für Tests
+  workflow_dispatch:
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Supabase Keepalive
+        run: |
+          curl -f -X POST \
+            -H "X-Keepalive-Secret: ${{ secrets.KEEPALIVE_SECRET }}" \
+            -H "Content-Type: application/json" \
+            https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1/keepalive \
+            || echo "Keepalive failed - will retry next run"

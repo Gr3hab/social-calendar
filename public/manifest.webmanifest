@@ -1,0 +1,21 @@
+{
+  "name": "Plan It - Social Calendar",
+  "short_name": "Plan It",
+  "description": "Social Calendar fuer schnelle Event-Planung mit Freunden.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0f172a",
+  "theme_color": "#0ea5e9",
+  "lang": "de-DE",
+  "icons": [
+    {
+      "src": "/vite.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
+
