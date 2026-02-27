@@ -4,11 +4,34 @@
 
 import { createClient } from '@supabase/supabase-js'
 
-// Environment variables - in production these should be properly set
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://your-project-ref.supabase.co'
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'your-anon-key'
+const rawSupabaseUrl = (import.meta.env.VITE_SUPABASE_URL ?? '').trim()
+const rawSupabaseAnonKey = (import.meta.env.VITE_SUPABASE_ANON_KEY ?? '').trim()
+
+const SUPABASE_PLACEHOLDER_URL = 'https://your-project-ref.supabase.co'
+const SUPABASE_PLACEHOLDER_KEY = 'your-anon-key'
+
+const SUPABASE_CONFIGURED =
+  rawSupabaseUrl.length > 0 &&
+  rawSupabaseAnonKey.length > 0 &&
+  rawSupabaseUrl !== SUPABASE_PLACEHOLDER_URL &&
+  rawSupabaseAnonKey !== SUPABASE_PLACEHOLDER_KEY &&
+  rawSupabaseUrl.startsWith('https://') &&
+  rawSupabaseUrl.includes('.supabase.co')
+
+const supabaseUrl = SUPABASE_CONFIGURED ? rawSupabaseUrl : SUPABASE_PLACEHOLDER_URL
+const supabaseAnonKey = SUPABASE_CONFIGURED ? rawSupabaseAnonKey : SUPABASE_PLACEHOLDER_KEY
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey)
+
+export function isSupabaseConfigured(): boolean {
+  return SUPABASE_CONFIGURED
+}
+
+function assertSupabaseConfigured() {
+  if (!SUPABASE_CONFIGURED) {
+    throw new Error('Supabase is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.')
+  }
+}
 
 // ========================================
 // Type Definitions
@@ -77,11 +100,13 @@ export interface EventAttendee {
 // ========================================
 
 // Email Magic Login (statt Phone OTP!)
-export async function signInWithEmail(email: string) {
+export async function signInWithEmail(email: string, redirectTo?: string) {
+  assertSupabaseConfigured()
   const { data, error } = await supabase.auth.signInWithOtp({
     email,
     options: {
       shouldCreateUser: true,
+      ...(redirectTo ? { emailRedirectTo: redirectTo } : {}),
     }
   })
 
@@ -91,6 +116,7 @@ export async function signInWithEmail(email: string) {
 
 // Phone OTP (nur wenn wirklich nötig - kostet SMS!)
 export async function signInWithPhone(phone: string) {
+  assertSupabaseConfigured()
   const { data, error } = await supabase.auth.signInWithOtp({
     phone,
     options: {
@@ -104,6 +130,7 @@ export async function signInWithPhone(phone: string) {
 
 // Get current user profile
 export async function getCurrentProfile() {
+  assertSupabaseConfigured()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return null
 
@@ -134,6 +161,7 @@ export async function getCurrentProfile() {
 
 // Update user profile
 export async function updateProfile(updates: Partial<Profile>) {
+  assertSupabaseConfigured()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) throw new Error('Not authenticated')
 
@@ -150,6 +178,7 @@ export async function updateProfile(updates: Partial<Profile>) {
 
 // Get user's events
 export async function getUserEvents() {
+  assertSupabaseConfigured()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return []
 
@@ -180,6 +209,7 @@ export async function getUserEvents() {
 
 // Create event
 export async function createEvent(event: Omit<Event, 'id' | 'created_at' | 'created_by'>) {
+  assertSupabaseConfigured()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) throw new Error('Not authenticated')
 
@@ -215,6 +245,7 @@ function generateInvitationCode(): string {
 
 // RSVP to event
 export async function rsvpToEvent(eventId: string, status: 'yes' | 'no' | 'maybe') {
+  assertSupabaseConfigured()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) throw new Error('Not authenticated')
 
@@ -236,6 +267,7 @@ export async function rsvpToEvent(eventId: string, status: 'yes' | 'no' | 'maybe
 
 // Get user's groups
 export async function getUserGroups() {
+  assertSupabaseConfigured()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return []
 
@@ -262,6 +294,7 @@ export async function getUserGroups() {
 
 // Create group
 export async function createGroup(group: Omit<Group, 'id' | 'created_at' | 'created_by'>) {
+  assertSupabaseConfigured()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) throw new Error('Not authenticated')
 
@@ -290,6 +323,7 @@ export async function createGroup(group: Omit<Group, 'id' | 'created_at' | 'crea
 
 // Public event access via edge function
 export async function getPublicEvent(invitationCode: string) {
+  assertSupabaseConfigured()
   const { data, error } = await supabase.functions.invoke('public-event', {
     body: { code: invitationCode }
   })
@@ -300,6 +334,7 @@ export async function getPublicEvent(invitationCode: string) {
 
 // Public RSVP via edge function
 export async function publicRsvp(invitationCode: string, name: string, phoneNumber: string, status: 'yes' | 'no' | 'maybe') {
+  assertSupabaseConfigured()
   const { data, error } = await supabase.functions.invoke('rsvp-public', {
     body: { 
       code: invitationCode, 

@@ -120,7 +120,7 @@ export function isApiDataEnabled(): boolean {
     return false;
   }
 
-  return Boolean(import.meta.env.PROD);
+  return Boolean(import.meta.env.PROD) && getDataApiBaseUrl().length > 0;
 }
 
 function toDate(value?: string | null): Date | undefined {

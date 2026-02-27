@@ -38,6 +38,7 @@ coverage/
 # Supabase
 supabase/.env
 supabase/config.toml
+supabase/.temp/
 
 # Service Role Keys (NEVER commit!)
 SUPABASE_SERVICE_ROLE_KEY=*

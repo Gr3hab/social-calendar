@@ -57,7 +57,7 @@ export function isApiAuthEnabled(): boolean {
   if (explicitMode === 'mock') {
     return false;
   }
-  return Boolean(import.meta.env.PROD);
+  return Boolean(import.meta.env.PROD) && getApiBaseUrl().length > 0;
 }
 
 async function safeParseJson<T>(response: Response): Promise<T | null> {

@@ -3,6 +3,14 @@ import React, { createContext, useContext, useReducer, useEffect } from 'react';
 import type { User, AuthState } from '../types';
 import { maybeThrowMockFault } from '../services/mockFaults';
 import { isApiAuthEnabled, sendCodeApi, verifyCodeApi } from '../services/authApi';
+import { featureFlags } from '../config/featureFlags';
+import {
+  getCurrentProfile,
+  isSupabaseConfigured,
+  signInWithEmail,
+  supabase,
+  updateProfile as updateSupabaseProfile,
+} from '../lib/supabase';
 
 type AuthAction = 
   | { type: 'LOGIN_START' }
@@ -18,9 +26,79 @@ const initialState: AuthState = {
 };
 
 const MAGIC_LINK_PENDING_EMAIL_KEY = 'auth_magic_link_pending_email';
+const SUPABASE_MAGIC_LINK_ENABLED = featureFlags.authMagicLinkOnly && isSupabaseConfigured();
 
 interface MagicLinkRequestResult {
   sent: boolean;
+}
+
+function cleanSocialHandle(value?: string): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  return trimmed.startsWith('@') ? trimmed : `@${trimmed}`;
+}
+
+async function mapSupabaseUserToUser(authUser: {
+  id: string;
+  email?: string;
+  created_at?: string;
+  user_metadata?: Record<string, unknown>;
+}): Promise<User> {
+  const profile = await getCurrentProfile().catch(() => null);
+  const metadata = authUser.user_metadata ?? {};
+  const displayName =
+    profile?.display_name?.trim() ||
+    (typeof metadata.display_name === 'string' ? metadata.display_name.trim() : '') ||
+    (typeof metadata.name === 'string' ? metadata.name.trim() : '') ||
+    authUser.email?.split('@')[0] ||
+    '';
+
+  const instagram = cleanSocialHandle(
+    profile?.instagram_handle ??
+      (typeof metadata.instagram === 'string' ? metadata.instagram : undefined),
+  );
+  const snapchat = cleanSocialHandle(
+    profile?.snapchat_handle ??
+      (typeof metadata.snapchat === 'string' ? metadata.snapchat : undefined),
+  );
+  const tiktok = cleanSocialHandle(
+    profile?.tiktok_handle ??
+      (typeof metadata.tiktok === 'string' ? metadata.tiktok : undefined),
+  );
+
+  return {
+    id: authUser.id,
+    name: displayName,
+    phoneNumber: profile?.phone_number ?? '',
+    email: authUser.email,
+    avatar: profile?.avatar_url ?? undefined,
+    socialHandles: {
+      ...(instagram ? { instagram } : {}),
+      ...(snapchat ? { snapchat } : {}),
+      ...(tiktok ? { tiktok } : {}),
+    },
+    ageBand: '16_20',
+    consentStatus: 'not_required',
+    createdAt: new Date(authUser.created_at ?? Date.now()),
+  };
+}
+
+function toProfilePatch(data: Partial<User>) {
+  return {
+    ...(typeof data.name === 'string' ? { display_name: data.name.trim() } : {}),
+    ...(typeof data.phoneNumber === 'string' ? { phone_number: data.phoneNumber.trim() || undefined } : {}),
+    ...(typeof data.avatar === 'string' ? { avatar_url: data.avatar.trim() || undefined } : {}),
+    ...(data.socialHandles ? {
+      instagram_handle: data.socialHandles.instagram?.trim() || undefined,
+      snapchat_handle: data.socialHandles.snapchat?.trim() || undefined,
+      tiktok_handle: data.socialHandles.tiktok?.trim() || undefined,
+    } : {}),
+  };
 }
 
 export function authReducer(state: AuthState, action: AuthAction): AuthState {
@@ -58,12 +136,62 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [state, dispatch] = useReducer(authReducer, initialState);
 
   useEffect(() => {
-    const savedUser = localStorage.getItem('user');
-    if (savedUser) {
-      dispatch({ type: 'LOGIN_SUCCESS', payload: JSON.parse(savedUser) });
-    } else {
-      dispatch({ type: 'LOGIN_FAILURE' });
+    let isMounted = true;
+
+    const bootstrap = async () => {
+      if (SUPABASE_MAGIC_LINK_ENABLED) {
+        const { data } = await supabase.auth.getSession();
+        if (data.session?.user) {
+          const mappedUser = await mapSupabaseUserToUser(data.session.user);
+          if (!isMounted) {
+            return;
+          }
+          localStorage.setItem('user', JSON.stringify(mappedUser));
+          dispatch({ type: 'LOGIN_SUCCESS', payload: mappedUser });
+          return;
+        }
+      }
+
+      const savedUser = localStorage.getItem('user');
+      if (savedUser) {
+        dispatch({ type: 'LOGIN_SUCCESS', payload: JSON.parse(savedUser) });
+      } else {
+        dispatch({ type: 'LOGIN_FAILURE' });
+      }
+    };
+
+    void bootstrap();
+
+    if (!SUPABASE_MAGIC_LINK_ENABLED) {
+      return () => {
+        isMounted = false;
+      };
     }
+
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!isMounted) {
+        return;
+      }
+      if (!session?.user) {
+        localStorage.removeItem('user');
+        localStorage.removeItem('auth_token');
+        dispatch({ type: 'LOGOUT' });
+        return;
+      }
+
+      void mapSupabaseUserToUser(session.user).then((mappedUser) => {
+        if (!isMounted) {
+          return;
+        }
+        localStorage.setItem('user', JSON.stringify(mappedUser));
+        dispatch({ type: 'LOGIN_SUCCESS', payload: mappedUser });
+      });
+    });
+
+    return () => {
+      isMounted = false;
+      listener.subscription.unsubscribe();
+    };
   }, []);
 
   const sendCode = async (phoneNumber: string): Promise<boolean> => {
@@ -84,11 +212,34 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return { sent: false };
     }
 
+    if (SUPABASE_MAGIC_LINK_ENABLED) {
+      const redirectTo =
+        typeof window !== 'undefined'
+          ? `${window.location.origin}/`
+          : undefined;
+      await signInWithEmail(normalizedEmail, redirectTo);
+      window.localStorage.setItem(MAGIC_LINK_PENDING_EMAIL_KEY, normalizedEmail);
+      return { sent: true };
+    }
+
     window.localStorage.setItem(MAGIC_LINK_PENDING_EMAIL_KEY, normalizedEmail);
     return { sent: true };
   };
 
   const consumeMagicLinkSession = async (): Promise<boolean> => {
+    if (SUPABASE_MAGIC_LINK_ENABLED) {
+      const { data } = await supabase.auth.getSession();
+      if (!data.session?.user) {
+        return false;
+      }
+      const user = await mapSupabaseUserToUser(data.session.user);
+      window.localStorage.setItem('user', JSON.stringify(user));
+      window.localStorage.setItem('auth_token', data.session.access_token);
+      window.localStorage.removeItem(MAGIC_LINK_PENDING_EMAIL_KEY);
+      dispatch({ type: 'LOGIN_SUCCESS', payload: user });
+      return true;
+    }
+
     const pendingEmail = window.localStorage.getItem(MAGIC_LINK_PENDING_EMAIL_KEY)?.trim();
     if (!pendingEmail) {
       return false;
@@ -162,6 +313,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const logout = () => {
+    if (SUPABASE_MAGIC_LINK_ENABLED) {
+      void supabase.auth.signOut();
+    }
     localStorage.removeItem('user');
     localStorage.removeItem('auth_token');
     localStorage.removeItem(MAGIC_LINK_PENDING_EMAIL_KEY);
@@ -173,6 +327,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const updatedUser = { ...state.user, ...data };
       localStorage.setItem('user', JSON.stringify(updatedUser));
       dispatch({ type: 'UPDATE_USER', payload: data });
+
+      if (SUPABASE_MAGIC_LINK_ENABLED) {
+        const patch = toProfilePatch(data);
+        if (Object.keys(patch).length > 0) {
+          void updateSupabaseProfile(patch).catch((error) => {
+            console.error('Failed to sync profile to Supabase', error);
+          });
+        }
+      }
     }
   };
 
