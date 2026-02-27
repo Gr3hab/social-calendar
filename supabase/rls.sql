@@ -203,6 +203,48 @@ using (
   )
 );
 
+-- Public invite responses: Event-Creator darf Platzhalter/Antworten verwalten
+create policy "public_invite_responses_insert_event_creator"
+on public.public_invite_responses for insert
+with check (
+  exists (
+    select 1
+    from public.events e
+    where e.id = public_invite_responses.event_id
+      and e.created_by = auth.uid()
+  )
+);
+
+create policy "public_invite_responses_update_event_creator"
+on public.public_invite_responses for update
+using (
+  exists (
+    select 1
+    from public.events e
+    where e.id = public_invite_responses.event_id
+      and e.created_by = auth.uid()
+  )
+)
+with check (
+  exists (
+    select 1
+    from public.events e
+    where e.id = public_invite_responses.event_id
+      and e.created_by = auth.uid()
+  )
+);
+
+create policy "public_invite_responses_delete_event_creator"
+on public.public_invite_responses for delete
+using (
+  exists (
+    select 1
+    from public.events e
+    where e.id = public_invite_responses.event_id
+      and e.created_by = auth.uid()
+  )
+);
+
 -- ========================================
 -- COMPLIANCE / SAFETY POLICIES
 -- ========================================
